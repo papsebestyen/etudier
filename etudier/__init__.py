@@ -1,24 +1,53 @@
 #!/usr/bin/env python
 
+import argparse
+import json
+import logging
+import math
+import os
+import random
 import re
 import sys
-import math
-import json
 import time
-import random
-import argparse
-import networkx
-import requests_html
-
 from pathlib import Path
 from string import Template
-from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
-from urllib.parse import urlparse, parse_qs
-from networkx.algorithms.community.modularity_max import greedy_modularity_communities
+from urllib.parse import parse_qs, urlparse
 
+import networkx
+import requests_html
+from aswan.security.proxy_base import ProxyAuth
+from aswan.security.proxy_utils import get_chrome_options
+from networkx.algorithms.community.modularity_max import greedy_modularity_communities
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.common.by import By
-import logging
+
+auth = ProxyAuth(
+    user=os.environ["PACKETSTREAM_USERNAME"],
+    password=os.environ["PACKETSTREAM_PASSWORD"],
+)
+prefix = "http"
+host = "proxy.packetstream.io"
+port_no = 31112
+
+
+def get_driver():
+    temp = True
+    while temp:
+        try:
+            # Add your proxxy change code here
+            driver = webdriver.Chrome(
+                options=get_chrome_options(
+                    host=host, port_no=port_no, prefix=prefix, auth=auth
+                )
+            )
+            driver.get("https://www.google.com")
+            temp = False
+            return driver
+        except Exception as e:
+            print(e)
+            driver.quit()
+
 
 logging.basicConfig(format="%(asctime)s - %(message)s", datefmt="%y-%m-%d %H:%M:%S")
 
@@ -60,7 +89,7 @@ def main():
     args = parser.parse_args()
 
     # ready to start up headless browser
-    driver = webdriver.Chrome()
+    driver = get_driver()
 
     # create our graph that will get populated
     g = networkx.DiGraph()
@@ -263,7 +292,12 @@ def get_html(url):
     global driver
 
     time.sleep(random.randint(1, 5))
-    driver.get(url)
+    try:
+        driver.get(url)
+    except WebDriverException:
+        driver.close()
+        driver = get_driver()
+        return get_html(url)
     while True:
         try:
             recap = driver.find_element(By.CSS_SELECTOR, "#gs_captcha_ccl,#recaptcha")
@@ -277,11 +311,14 @@ def get_html(url):
             except NoSuchElementException:
                 logging.warning("google has blocked this browser, reopening")
                 driver.close()
-                driver = webdriver.Chrome()
+                driver = get_driver()
                 return get_html(url)
 
         logging.warning("... it's CAPTCHA time!\a ...")
+        driver.close()
+        driver = get_driver()
         time.sleep(5)
+        return get_html(url)
 
 
 def remove_nones(d):
